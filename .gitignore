@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Local dashboard data and runtime output
+shreyas_os.db
+streamlit.stdout.log
+streamlit.stderr.log
+
+# Streamlit secrets must stay local
+.streamlit/secrets.toml
+
+# Virtual environments and editor settings
+.venv/
+venv/
+.vscode/
