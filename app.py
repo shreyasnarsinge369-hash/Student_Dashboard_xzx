@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from html import escape
 
 import altair as alt
 import pandas as pd
 import streamlit as st
 
+from calendar_service import (
+    CalendarSetupError,
+    connect_google_calendar,
+    get_upcoming_events,
+    is_calendar_authorized,
+    is_calendar_configured,
+)
 from database import (
     Task,
     add_study_session,
@@ -456,12 +464,22 @@ def get_workout_data() -> pd.DataFrame:
     )
 
 
-def get_calendar_events() -> pd.DataFrame:
-    return pd.DataFrame(
-        {
-            "Time": ["09:00", "18:00", "20:00"],
-            "Event": ["College", "Workout", "Backend Study"],
-        }
+def get_calendar_events() -> tuple[pd.DataFrame, str]:
+    """Fetch Google Calendar events without starting OAuth during page render."""
+    if not is_calendar_configured():
+        return pd.DataFrame(columns=["Time", "Event"]), "Calendar setup needed"
+
+    try:
+        events = get_upcoming_events()
+    except CalendarSetupError as error:
+        return pd.DataFrame(columns=["Time", "Event"]), str(error)
+
+    return (
+        pd.DataFrame(
+            [{"Time": event.time, "Event": event.title} for event in events],
+            columns=["Time", "Event"],
+        ),
+        "Google Calendar synced",
     )
 
 
@@ -650,7 +668,7 @@ def render_study_card(subject_breakdown: pd.DataFrame, weekly_study: pd.DataFram
     rows = "".join(
         f"""
         <div class="subject-row">
-            <span class="subject-name">{row.Subject}</span>
+            <span class="subject-name">{escape(str(row.Subject))}</span>
             <span class="subject-hours">{row.Hours:g} hrs</span>
         </div>
         """
@@ -730,19 +748,38 @@ def render_workout_card(weekly_workouts: pd.DataFrame) -> None:
     card_end()
 
 
-def render_calendar_card(events: pd.DataFrame) -> None:
-    card_start("Upcoming Calendar Events", "◎")
+def render_calendar_card(events: pd.DataFrame, calendar_status: str) -> None:
+    card_start("Upcoming Calendar Events", "[o]")
+    if is_calendar_configured() and not is_calendar_authorized():
+        if st.button("Connect Google Calendar", icon=":material/calendar_month:"):
+            try:
+                connect_google_calendar()
+            except CalendarSetupError as error:
+                st.error(str(error))
+            else:
+                st.rerun()
+
     rows = "".join(
         f"""
         <div class="calendar-row">
             <span class="calendar-time">{event.Time}</span>
-            <span class="calendar-event">{event.Event}</span>
+            <span class="calendar-event">{escape(str(event.Event))}</span>
         </div>
         """
         for event in events.itertuples()
     )
-    st.markdown(rows, unsafe_allow_html=True)
-    st.markdown('<div class="mini-note">Sample schedule data until Google Calendar is connected.</div>', unsafe_allow_html=True)
+    if rows:
+        st.markdown(rows, unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="mini-note">No upcoming events to display.</div>', unsafe_allow_html=True)
+
+    if not is_calendar_configured():
+        st.markdown(
+            '<div class="mini-note">Add credentials.json to connect your primary Google Calendar.</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(f'<div class="mini-note">{escape(calendar_status)}</div>', unsafe_allow_html=True)
     card_end()
 
 
@@ -750,7 +787,7 @@ def render_dashboard() -> None:
     tasks = get_todays_tasks()
     subject_breakdown, weekly_study = get_study_data()
     weekly_workouts = get_workout_data()
-    events = get_calendar_events()
+    events, calendar_status = get_calendar_events()
 
     st.markdown('<main class="os-shell">', unsafe_allow_html=True)
     render_header()
@@ -759,7 +796,7 @@ def render_dashboard() -> None:
     with left:
         render_tasks_card(tasks)
     with right:
-        render_calendar_card(events)
+        render_calendar_card(events, calendar_status)
 
     study_col, workout_col = st.columns(2, gap="large")
     with study_col:

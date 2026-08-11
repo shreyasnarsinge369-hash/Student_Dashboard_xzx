@@ -9,6 +9,8 @@ streamlit.stderr.log
 
 # Streamlit secrets must stay local
 .streamlit/secrets.toml
+credentials.json
+token.json
 
 # Virtual environments and editor settings
 .venv/
