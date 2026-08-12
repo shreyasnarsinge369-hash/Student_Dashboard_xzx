@@ -7,6 +7,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
+from briefing_service import build_daily_briefing
 from calendar_service import (
     CalendarSetupError,
     connect_google_calendar,
@@ -249,6 +250,53 @@ def inject_css() -> None:
                 font-size: 1.05rem;
             }
 
+            .briefing-card {
+                margin-bottom: 1.25rem;
+                padding: 1.2rem 1.35rem;
+                border: 1px solid rgba(34, 211, 238, 0.26);
+                border-radius: 16px;
+                background: linear-gradient(110deg, rgba(8, 32, 48, 0.76), rgba(12, 20, 36, 0.72));
+                box-shadow: inset 3px 0 0 var(--cyan), 0 14px 40px rgba(0, 0, 0, 0.2);
+            }
+
+            .briefing-label {
+                color: var(--cyan);
+                font-size: 0.72rem;
+                font-weight: 800;
+                letter-spacing: 0.12em;
+                text-transform: uppercase;
+            }
+
+            .briefing-headline {
+                margin: 0.35rem 0 0.2rem;
+                color: var(--text);
+                font-size: 1.35rem;
+                font-weight: 800;
+            }
+
+            .briefing-summary {
+                margin: 0;
+                color: var(--muted);
+                font-size: 0.9rem;
+            }
+
+            .briefing-list {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 0.65rem;
+                margin-top: 1rem;
+            }
+
+            .briefing-item {
+                padding: 0.75rem 0.85rem;
+                border: 1px solid rgba(125, 211, 252, 0.13);
+                border-radius: 10px;
+                color: var(--text);
+                background: rgba(5, 16, 29, 0.44);
+                font-size: 0.84rem;
+                line-height: 1.45;
+            }
+
             .metric-row {
                 display: grid;
                 grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -420,6 +468,10 @@ def inject_css() -> None:
                 .metric-row {
                     grid-template-columns: 1fr;
                 }
+
+                .briefing-list {
+                    grid-template-columns: 1fr;
+                }
             }
         </style>
         """,
@@ -549,6 +601,37 @@ def render_metric_tiles(metrics: list[tuple[str, str]]) -> None:
     st.markdown(f'<div class="metric-row">{tiles}</div>', unsafe_allow_html=True)
 
 
+def render_daily_briefing(
+    tasks: list[Task],
+    events: pd.DataFrame,
+    subject_breakdown: pd.DataFrame,
+    weekly_workouts: pd.DataFrame,
+) -> None:
+    """Render a local, data-driven command brief for the current day."""
+    briefing = build_daily_briefing(
+        today=get_now().date(),
+        tasks=tasks,
+        calendar_events=events,
+        subject_breakdown=subject_breakdown,
+        weekly_workouts=weekly_workouts,
+        habits=get_habits_for_date(get_now().date()),
+    )
+    focus_items = "".join(
+        f'<div class="briefing-item">{escape(item)}</div>' for item in briefing.focus_items
+    )
+    st.markdown(
+        f"""
+        <section class="briefing-card">
+            <div class="briefing-label">Daily Briefing</div>
+            <div class="briefing-headline">{escape(briefing.headline)}</div>
+            <p class="briefing-summary">{escape(briefing.summary)}</p>
+            <div class="briefing-list">{focus_items}</div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 @st.fragment(run_every="60s")
 def render_header() -> None:
     now = get_now()
@@ -615,7 +698,7 @@ def _render_tasks_card_content(tasks: list[Task]) -> None:
         st.markdown('<div class="mini-note">Clear board. Add one meaningful task to begin.</div>', unsafe_allow_html=True)
 
     for task in tasks:
-        task_col, priority_col, remove_col = st.columns([4.4, 1.1, 0.7], vertical_alignment="center")
+        task_col, priority_col, remove_col = st.columns([4.2, 1.1, 0.9], vertical_alignment="center")
         with task_col:
             is_complete = st.checkbox(
                 task.name,
@@ -632,7 +715,7 @@ def _render_tasks_card_content(tasks: list[Task]) -> None:
                 unsafe_allow_html=True,
             )
         with remove_col:
-            if st.button("Remove", key=f"remove-{task.id}", icon=":material/delete:", help=f"Remove {task.name}"):
+            if st.button("", key=f"remove-{task.id}", icon=":material/delete:", help=f"Remove {task.name}"):
                 delete_task(task.id)
                 st.rerun()
     render_progress("Today's Progress", progress_percent)
@@ -792,7 +875,7 @@ def _render_habits_card_content() -> None:
 
     completed_count = 0
     for habit in habits:
-        habit_col, streak_col, remove_col = st.columns([4.1, 1.2, 0.7], vertical_alignment="center")
+        habit_col, streak_col, remove_col = st.columns([4.0, 1.2, 0.9], vertical_alignment="center")
         with habit_col:
             is_complete = st.checkbox(habit.name, value=habit.completed, key=f"habit-{habit.id}")
             if is_complete != habit.completed:
@@ -804,7 +887,7 @@ def _render_habits_card_content() -> None:
                 unsafe_allow_html=True,
             )
         with remove_col:
-            if st.button("Remove", key=f"remove-habit-{habit.id}", icon=":material/delete:", help=f"Remove {habit.name}"):
+            if st.button("", key=f"remove-habit-{habit.id}", icon=":material/delete:", help=f"Remove {habit.name}"):
                 delete_habit(habit.id)
                 st.rerun()
         completed_count += int(habit.completed)
@@ -926,6 +1009,7 @@ def render_dashboard() -> None:
 
     st.markdown('<main class="os-shell">', unsafe_allow_html=True)
     render_header()
+    render_daily_briefing(tasks, events, subject_breakdown, weekly_workouts)
 
     left, right = st.columns([1.05, 1], gap="large")
     with left:

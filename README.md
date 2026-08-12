@@ -11,6 +11,7 @@ Personal Command Center built with Streamlit and SQLite. It is a dark, focused d
 - Google Calendar panel that reads upcoming events from your primary calendar
 - Habit tracker with daily completion and individual streaks
 - Daily history view for reviewing task, study, workout, and habit performance
+- Daily Briefing that turns live dashboard data into a concise local action plan
 - Local SQLite storage with no external APIs or accounts required
 
 ## Project Structure
@@ -18,6 +19,7 @@ Personal Command Center built with Streamlit and SQLite. It is a dark, focused d
 ```text
 Daily Dashboard/
 |- app.py                 # Streamlit UI, charts, and page styling
+|- briefing_service.py    # Local, data-driven daily briefing rules
 |- database.py            # SQLite schema and data-access functions
 |- requirements.txt       # Python dependencies
 |- .streamlit/config.toml # Streamlit theme and local server settings
@@ -67,7 +69,7 @@ The dashboard requests only the `calendar.readonly` scope and reads the next fiv
 
 ## Planned Modules
 
-1. Add an AI daily briefing based on your real dashboard data.
+1. Add an optional LLM-powered briefing engine for richer coaching and planning.
 2. Add task details, due times, and a richer past-day review.
 3. Move the local SQLite layer to a hosted database for multi-device access.
 
@@ -75,4 +77,4 @@ The dashboard requests only the `calendar.readonly` scope and reads the next fiv
 
 - **Google Calendar API:** add OAuth credentials in `.streamlit/secrets.toml`, then replace `get_calendar_events()` with a calendar service.
 - **Hosted database:** move the functions in `database.py` to Supabase, Neon, or another PostgreSQL provider when you want multi-device access.
-- **AI briefing:** send a compact, structured summary of tasks, events, study, and workout data to an LLM and render the response as a morning briefing.
+- **AI briefing:** `briefing_service.py` already creates a local briefing from dashboard data. A future LLM adapter can use the same inputs for richer coaching without changing the UI.
