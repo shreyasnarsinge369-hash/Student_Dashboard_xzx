@@ -19,8 +19,13 @@ from database import (
     add_study_session,
     add_task,
     add_workout_session,
+    add_habit,
+    delete_habit,
     delete_task,
     ensure_daily_tasks,
+    get_day_summary,
+    get_habit_streak,
+    get_habits_for_date,
     get_study_minutes_between,
     get_study_streak,
     get_study_subject_breakdown,
@@ -28,6 +33,7 @@ from database import (
     get_workout_streak,
     get_workout_totals_between,
     initialize_database,
+    set_habit_completion,
     set_task_completion,
 )
 
@@ -201,6 +207,22 @@ def inject_css() -> None:
             }
 
             .glass-card:hover {
+                transform: translateY(-2px);
+                border-color: var(--border-bright);
+                box-shadow: 0 22px 70px rgba(0, 0, 0, 0.34), 0 0 35px rgba(34, 211, 238, 0.08);
+            }
+
+            [data-testid="stVerticalBlockBorderWrapper"] {
+                padding: 0.35rem;
+                border: 1px solid var(--border);
+                border-radius: 20px;
+                background: linear-gradient(145deg, var(--panel), rgba(7, 14, 26, 0.62));
+                box-shadow: 0 18px 55px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.055);
+                backdrop-filter: blur(18px);
+                transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+            }
+
+            [data-testid="stVerticalBlockBorderWrapper"]:hover {
                 transform: translateY(-2px);
                 border-color: var(--border-bright);
                 box-shadow: 0 22px 70px rgba(0, 0, 0, 0.34), 0 0 35px rgba(34, 211, 238, 0.08);
@@ -486,18 +508,17 @@ def get_calendar_events() -> tuple[pd.DataFrame, str]:
 def card_start(title: str, icon: str) -> None:
     st.markdown(
         f"""
-        <div class="glass-card">
-            <div class="card-header">
-                <h2 class="card-title">{title}</h2>
-                <span class="card-icon">{icon}</span>
-            </div>
+        <div class="card-header">
+            <h2 class="card-title">{title}</h2>
+            <span class="card-icon">{icon}</span>
+        </div>
         """,
         unsafe_allow_html=True,
     )
 
 
 def card_end() -> None:
-    st.markdown("</div>", unsafe_allow_html=True)
+    """Native Streamlit containers own the boundary of every dashboard card."""
 
 
 def render_progress(label: str, percent: int) -> None:
@@ -568,7 +589,7 @@ def render_header() -> None:
     )
 
 
-def render_tasks_card(tasks: list[Task]) -> None:
+def _render_tasks_card_content(tasks: list[Task]) -> None:
     completed_count = sum(task.completed for task in tasks)
     progress_percent = round((completed_count / len(tasks)) * 100) if tasks else 0
 
@@ -618,7 +639,7 @@ def render_tasks_card(tasks: list[Task]) -> None:
     card_end()
 
 
-def render_study_card(subject_breakdown: pd.DataFrame, weekly_study: pd.DataFrame) -> None:
+def _render_study_card_content(subject_breakdown: pd.DataFrame, weekly_study: pd.DataFrame) -> None:
     today_hours = float(subject_breakdown["Hours"].sum())
     week_hours = float(weekly_study["Hours"].sum())
     study_streak = get_study_streak(get_now().date())
@@ -679,7 +700,7 @@ def render_study_card(subject_breakdown: pd.DataFrame, weekly_study: pd.DataFram
     card_end()
 
 
-def render_workout_card(weekly_workouts: pd.DataFrame) -> None:
+def _render_workout_card_content(weekly_workouts: pd.DataFrame) -> None:
     workouts_completed = int((weekly_workouts["Minutes"] > 0).sum())
     total_minutes = int(weekly_workouts["Minutes"].sum())
     total_distance = float(weekly_workouts["Distance"].sum())
@@ -748,7 +769,85 @@ def render_workout_card(weekly_workouts: pd.DataFrame) -> None:
     card_end()
 
 
-def render_calendar_card(events: pd.DataFrame, calendar_status: str) -> None:
+def _render_habits_card_content() -> None:
+    """Render recurring habits with independent daily completion tracking."""
+    today = get_now().date()
+    habits = get_habits_for_date(today)
+
+    card_start("Habit Tracker", "[+]" )
+    with st.form("add-habit-form", clear_on_submit=True):
+        habit_name = st.text_input("New habit", placeholder="Read 20 minutes, drink water...")
+        add_habit_button = st.form_submit_button("Add habit")
+
+    if add_habit_button:
+        if not habit_name.strip():
+            st.warning("Give the habit a name first.")
+        elif add_habit(habit_name):
+            st.rerun()
+        else:
+            st.warning("That habit already exists.")
+
+    if not habits:
+        st.markdown('<div class="mini-note">Build your first repeatable habit.</div>', unsafe_allow_html=True)
+
+    completed_count = 0
+    for habit in habits:
+        habit_col, streak_col, remove_col = st.columns([4.1, 1.2, 0.7], vertical_alignment="center")
+        with habit_col:
+            is_complete = st.checkbox(habit.name, value=habit.completed, key=f"habit-{habit.id}")
+            if is_complete != habit.completed:
+                set_habit_completion(habit.id, today, is_complete)
+                st.rerun()
+        with streak_col:
+            st.markdown(
+                f'<span class="priority low">{get_habit_streak(habit.id, today)}d</span>',
+                unsafe_allow_html=True,
+            )
+        with remove_col:
+            if st.button("Remove", key=f"remove-habit-{habit.id}", icon=":material/delete:", help=f"Remove {habit.name}"):
+                delete_habit(habit.id)
+                st.rerun()
+        completed_count += int(habit.completed)
+
+    progress_percent = round(completed_count / len(habits) * 100) if habits else 0
+    render_progress("Habit completion", progress_percent)
+    card_end()
+
+
+def _render_history_card_content() -> None:
+    """Show a compact, read-only summary for any past or present day."""
+    today = get_now().date()
+    card_start("Daily History", "[<]")
+    selected_date = st.date_input("Review date", value=today, max_value=today, key="history-date")
+    (
+        task_total,
+        task_completed,
+        study_minutes,
+        workout_minutes,
+        workout_distance,
+        habit_total,
+        habit_completed,
+    ) = get_day_summary(selected_date)
+
+    render_metric_tiles(
+        [
+            ("Tasks", f"{task_completed}/{task_total}"),
+            ("Study", f"{study_minutes / 60:g}h"),
+            ("Workout", f"{workout_minutes}m"),
+        ]
+    )
+    task_progress = round(task_completed / task_total * 100) if task_total else 0
+    habit_progress = round(habit_completed / habit_total * 100) if habit_total else 0
+    render_progress("Task completion", task_progress)
+    render_progress("Habit completion", habit_progress)
+    st.markdown(
+        f'<div class="mini-note">Distance logged: {workout_distance:g} km | Habits: {habit_completed}/{habit_total}</div>',
+        unsafe_allow_html=True,
+    )
+    card_end()
+
+
+def _render_calendar_card_content(events: pd.DataFrame, calendar_status: str) -> None:
     card_start("Upcoming Calendar Events", "[o]")
     if is_calendar_configured() and not is_calendar_authorized():
         if st.button("Connect Google Calendar", icon=":material/calendar_month:"):
@@ -783,6 +882,42 @@ def render_calendar_card(events: pd.DataFrame, calendar_status: str) -> None:
     card_end()
 
 
+def render_tasks_card(tasks: list[Task]) -> None:
+    """Keep task controls inside one native Streamlit card."""
+    with st.container(border=True):
+        _render_tasks_card_content(tasks)
+
+
+def render_study_card(subject_breakdown: pd.DataFrame, weekly_study: pd.DataFrame) -> None:
+    """Keep study controls and data visualisation inside one native card."""
+    with st.container(border=True):
+        _render_study_card_content(subject_breakdown, weekly_study)
+
+
+def render_workout_card(weekly_workouts: pd.DataFrame) -> None:
+    """Keep workout controls and data visualisation inside one native card."""
+    with st.container(border=True):
+        _render_workout_card_content(weekly_workouts)
+
+
+def render_habits_card() -> None:
+    """Keep habit controls and streaks inside one native card."""
+    with st.container(border=True):
+        _render_habits_card_content()
+
+
+def render_history_card() -> None:
+    """Keep selected-day history summary inside one native card."""
+    with st.container(border=True):
+        _render_history_card_content()
+
+
+def render_calendar_card(events: pd.DataFrame, calendar_status: str) -> None:
+    """Keep calendar controls and events inside one native card."""
+    with st.container(border=True):
+        _render_calendar_card_content(events, calendar_status)
+
+
 def render_dashboard() -> None:
     tasks = get_todays_tasks()
     subject_breakdown, weekly_study = get_study_data()
@@ -803,6 +938,12 @@ def render_dashboard() -> None:
         render_study_card(subject_breakdown, weekly_study)
     with workout_col:
         render_workout_card(weekly_workouts)
+
+    habit_col, history_col = st.columns(2, gap="large")
+    with habit_col:
+        render_habits_card()
+    with history_col:
+        render_history_card()
 
     st.markdown("</main>", unsafe_allow_html=True)
 

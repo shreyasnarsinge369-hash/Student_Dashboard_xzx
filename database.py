@@ -46,6 +46,15 @@ class WorkoutSession:
     workout_date: date
 
 
+@dataclass(frozen=True)
+class Habit:
+    """A recurring personal habit with its state for a selected day."""
+
+    id: int
+    name: str
+    completed: bool
+
+
 DEFAULT_TASKS = (
     ("Backend Development", "High"),
     ("Workout", "Medium"),
@@ -105,6 +114,26 @@ def initialize_database() -> None:
                 distance_km REAL NOT NULL DEFAULT 0 CHECK (distance_km >= 0),
                 workout_date TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS habits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS habit_completions (
+                habit_id INTEGER NOT NULL,
+                completion_date TEXT NOT NULL,
+                completed INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (habit_id, completion_date),
+                FOREIGN KEY (habit_id) REFERENCES habits(id) ON DELETE CASCADE
             )
             """
         )
@@ -288,3 +317,108 @@ def get_workout_streak(today: date) -> int:
         streak += 1
         cursor -= timedelta(days=1)
     return streak
+
+
+def add_habit(name: str) -> bool:
+    """Create a habit, returning False when its name already exists."""
+    try:
+        with get_connection() as connection:
+            connection.execute("INSERT INTO habits (name) VALUES (?)", (name.strip(),))
+    except sqlite3.IntegrityError:
+        return False
+    return True
+
+
+def delete_habit(habit_id: int) -> None:
+    """Delete a habit and its recorded completions."""
+    with get_connection() as connection:
+        connection.execute("DELETE FROM habit_completions WHERE habit_id = ?", (habit_id,))
+        connection.execute("DELETE FROM habits WHERE id = ?", (habit_id,))
+
+
+def get_habits_for_date(target_date: date) -> list[Habit]:
+    """Return every habit and its completion state for the requested day."""
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT habits.id, habits.name, COALESCE(habit_completions.completed, 0) AS completed
+            FROM habits
+            LEFT JOIN habit_completions
+                ON habit_completions.habit_id = habits.id
+                AND habit_completions.completion_date = ?
+            ORDER BY habits.id ASC
+            """,
+            (target_date.isoformat(),),
+        ).fetchall()
+    return [Habit(row["id"], row["name"], bool(row["completed"])) for row in rows]
+
+
+def set_habit_completion(habit_id: int, target_date: date, completed: bool) -> None:
+    """Upsert one habit's completion state for one date."""
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO habit_completions (habit_id, completion_date, completed)
+            VALUES (?, ?, ?)
+            ON CONFLICT(habit_id, completion_date)
+            DO UPDATE SET completed = excluded.completed
+            """,
+            (habit_id, target_date.isoformat(), int(completed)),
+        )
+
+
+def get_habit_streak(habit_id: int, today: date) -> int:
+    """Count consecutive completed days for one habit, ending today."""
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT completion_date
+            FROM habit_completions
+            WHERE habit_id = ? AND completed = 1 AND completion_date <= ?
+            """,
+            (habit_id, today.isoformat()),
+        ).fetchall()
+    completed_dates = {date.fromisoformat(row["completion_date"]) for row in rows}
+    streak = 0
+    cursor = today
+    while cursor in completed_dates:
+        streak += 1
+        cursor -= timedelta(days=1)
+    return streak
+
+
+def get_day_summary(target_date: date) -> tuple[int, int, int, int, float, int, int]:
+    """Return task, study, workout, and habit totals for daily history."""
+    with get_connection() as connection:
+        task_row = connection.execute(
+            "SELECT COUNT(*) AS total, SUM(completed) AS completed FROM tasks WHERE task_date = ?",
+            (target_date.isoformat(),),
+        ).fetchone()
+        study_row = connection.execute(
+            "SELECT COALESCE(SUM(duration_minutes), 0) AS minutes FROM study_sessions WHERE study_date = ?",
+            (target_date.isoformat(),),
+        ).fetchone()
+        workout_row = connection.execute(
+            """
+            SELECT COALESCE(SUM(duration_minutes), 0) AS minutes,
+                   COALESCE(SUM(distance_km), 0) AS distance
+            FROM workout_sessions
+            WHERE workout_date = ?
+            """,
+            (target_date.isoformat(),),
+        ).fetchone()
+        habit_row = connection.execute(
+            """
+            SELECT COUNT(habits.id) AS total,
+                   COALESCE(SUM(habit_completions.completed), 0) AS completed
+            FROM habits
+            LEFT JOIN habit_completions
+                ON habit_completions.habit_id = habits.id
+                AND habit_completions.completion_date = ?
+            """,
+            (target_date.isoformat(),),
+        ).fetchone()
+    return (
+        task_row["total"], task_row["completed"] or 0, study_row["minutes"],
+        workout_row["minutes"], workout_row["distance"], habit_row["total"], habit_row["completed"],
+    )

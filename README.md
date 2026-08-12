@@ -9,6 +9,8 @@ Personal Command Center built with Streamlit and SQLite. It is a dark, focused d
 - Study session logger with daily totals, weekly chart, subject breakdown, and streak
 - Workout logger with weekly activity chart, training volume, distance, and streak
 - Google Calendar panel that reads upcoming events from your primary calendar
+- Habit tracker with daily completion and individual streaks
+- Daily history view for reviewing task, study, workout, and habit performance
 - Local SQLite storage with no external APIs or accounts required
 
 ## Project Structure
@@ -45,6 +47,8 @@ Daily Dashboard/
 - `tasks`: daily tasks, priority, and completion state
 - `study_sessions`: subject and duration for each study session
 - `workout_sessions`: workout type, duration, distance, and date
+- `habits`: reusable habit definitions
+- `habit_completions`: per-day completion state for each habit
 
 The app calls database functions such as `add_task()` or `add_study_session()` instead of writing SQL in the UI. This separation keeps the interface easier to maintain and makes a future migration to a hosted database much simpler.
 
@@ -63,9 +67,9 @@ The dashboard requests only the `calendar.readonly` scope and reads the next fiv
 
 ## Planned Modules
 
-1. Add previous-day history and editable task details.
-2. Add a habit tracker and dashboard streak view.
-3. Add an AI daily briefing based on your real dashboard data.
+1. Add an AI daily briefing based on your real dashboard data.
+2. Add task details, due times, and a richer past-day review.
+3. Move the local SQLite layer to a hosted database for multi-device access.
 
 ## Future Integrations
 
